@@ -1,0 +1,13 @@
+streamlit
+pymupdf
+numpy
+scipy
+astropy
+itur
+langchain-core
+langchain-text-splitters
+langchain-google-genai
+langchain-openai
+langchain-groq
+langgraph
+azure-search-documents>=11.5.0
