@@ -33,6 +33,8 @@ from azure.search.documents.indexes.models import (
     HnswAlgorithmConfiguration,
     HnswParameters,
     VectorSearchProfile,
+    ScalarQuantizationCompression,
+    ScalarQuantizationParameters,
 )
 from azure.search.documents.models import VectorizedQuery
 
@@ -115,12 +117,40 @@ def login_ui():
         else:
             st.error("Username not found.")
 
+# --- Microsoft SSO (Azure App Service Authentication / "Easy Auth") ---
+def get_sso_user():
+    """
+    Returns the signed-in Microsoft account (e.g. name@ceragon.com) when running on
+    Azure App Service with Authentication enabled. App Service removes these headers
+    from incoming requests and sets them itself, so they can be trusted there.
+    Outside Azure (e.g. Streamlit Cloud) they are ignored.
+    """
+    if not os.environ.get("WEBSITE_SITE_NAME"):  # set automatically by App Service
+        return None
+    try:
+        return st.context.headers.get("X-Ms-Client-Principal-Name")
+    except Exception:
+        return None
+
+def role_for_sso_user(email: str) -> str:
+    """Every authenticated Ceragon user is a customer, unless listed in TECHNICIAN_USERS."""
+    technicians = {e.strip().lower() for e in (get_secret("TECHNICIAN_USERS", "") or "").split(",") if e.strip()}
+    return "technician" if email.lower() in technicians else "customer"
+
+sso_user = get_sso_user()
+if sso_user and not st.session_state['user_role']:
+    st.session_state['user_role'] = role_for_sso_user(sso_user)
+    st.session_state['user_name'] = sso_user
+
 if not st.session_state['user_role']:
     login_ui()
     st.stop()
 
 # --- Sidebar Controls & Model Selection ---
-st.sidebar.success(f"Logged in as: {st.session_state['user_role'].capitalize()}")
+if sso_user:
+    st.sidebar.success(f"Signed in as {sso_user} ({st.session_state['user_role'].capitalize()})")
+else:
+    st.sidebar.success(f"Logged in as: {st.session_state['user_role'].capitalize()}")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🤖 Model Settings")
@@ -136,7 +166,9 @@ MODEL_OPTIONS = {
 selected_model_label = st.sidebar.selectbox("Select Reasoning / Chat Model:", list(MODEL_OPTIONS.keys()))
 selected_model_id = MODEL_OPTIONS[selected_model_label]
 
-if st.sidebar.button("Logout"):
+if sso_user:
+    st.sidebar.markdown("[Sign out](/.auth/logout)")
+elif st.sidebar.button("Logout"):
     st.session_state['user_role'] = None
     st.rerun()
 
@@ -189,6 +221,8 @@ def build_index_definition():
             name="content_vector",
             type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
             searchable=True,
+            hidden=True,      # never returned in results (the app doesn't need it)
+            stored=False,     # don't keep a second, retrievable copy of each vector
             vector_search_dimensions=EMBEDDING_DIM,
             vector_search_profile_name="vector-profile",
         ),
@@ -198,7 +232,16 @@ def build_index_definition():
     ]
     vector_search = VectorSearch(
         algorithms=[HnswAlgorithmConfiguration(name="hnsw-config", parameters=HnswParameters(metric="cosine"))],
-        profiles=[VectorSearchProfile(name="vector-profile", algorithm_configuration_name="hnsw-config")],
+        # Scalar quantization: vectors kept in the index as int8 instead of float32 (~4x smaller)
+        compressions=[ScalarQuantizationCompression(
+            compression_name="sq-int8",
+            parameters=ScalarQuantizationParameters(quantized_data_type="int8"),
+        )],
+        profiles=[VectorSearchProfile(
+            name="vector-profile",
+            algorithm_configuration_name="hnsw-config",
+            compression_name="sq-int8",
+        )],
     )
     return SearchIndex(name=INDEX_NAME, fields=fields, vector_search=vector_search)
 
