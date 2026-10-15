@@ -1,4 +1,4 @@
-streamlit
+streamlit>=1.37
 pymupdf
 numpy
 scipy
@@ -10,4 +10,4 @@ langchain-google-genai
 langchain-openai
 langchain-groq
 langgraph
-azure-search-documents>=11.5.0
+azure-search-documents>=11.6.0
