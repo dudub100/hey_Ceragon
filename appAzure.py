@@ -3,6 +3,7 @@ import os
 import base64
 import time
 import hashlib
+from urllib.parse import urlparse
 import fitz  # PyMuPDF
 import math
 import numpy as np
@@ -163,6 +164,14 @@ MODEL_OPTIONS = {
     "Llama 3 8B (OpenRouter - Free)": "openrouter:meta-llama/llama-3.1-8b-instruct:free"
 }
 
+# Azure (Microsoft Foundry) models: one dropdown entry per deployment name in AZURE_AI_DEPLOYMENTS
+_azure_deployments = [d.strip() for d in (get_secret("AZURE_AI_DEPLOYMENTS", "") or "").split(",") if d.strip()]
+if _azure_deployments and get_secret("AZURE_AI_ENDPOINT") and get_secret("AZURE_AI_KEY"):
+    MODEL_OPTIONS = {
+        **{f"{d} (Azure Foundry)": f"azure:{d}" for d in _azure_deployments},
+        **MODEL_OPTIONS,
+    }
+
 selected_model_label = st.sidebar.selectbox("Select Reasoning / Chat Model:", list(MODEL_OPTIONS.keys()))
 selected_model_id = MODEL_OPTIONS[selected_model_label]
 
@@ -211,6 +220,14 @@ def get_chat_llm(selected_value):
             return get_chat_llm("gemini:gemini-2.5-flash")
         return ChatOpenAI(base_url="https://openrouter.ai/api/v1", api_key=or_key,
                           model=model_id, temperature=0.01, max_tokens=4096)
+
+    elif provider == "azure":
+        # Uses the Azure OpenAI v1 (OpenAI-compatible) endpoint of the Foundry resource.
+        # Any URL from the resource works: only the host is kept.
+        parsed = urlparse(get_secret("AZURE_AI_ENDPOINT").strip())
+        base_url = f"{parsed.scheme or 'https'}://{parsed.netloc or parsed.path}/openai/v1/"
+        # No temperature / max_tokens: reasoning models (GPT-5.x, o-series) reject them
+        return ChatOpenAI(base_url=base_url, api_key=get_secret("AZURE_AI_KEY"), model=model_id)
 
 # --- Azure AI Search: index definition & clients ---
 def build_index_definition():
